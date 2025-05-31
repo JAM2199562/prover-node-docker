@@ -49,7 +49,7 @@ jobs:
         
         # Add commit SHA tag
         SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-        TAGS="${TAGS},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}"
+        TAGS="${TAGS},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
         
         echo "tags=${TAGS}" >> $GITHUB_OUTPUT
         echo "Generated tags: ${TAGS}"

@@ -40,10 +40,13 @@ jobs:
     - name: Tag and push image
       if: github.event_name != 'pull_request'
       run: |
+        # Generate 7-character short SHA
+        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        
         # Tag the image with your Docker Hub username
         docker tag zkwasm:latest ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:latest
-        docker tag zkwasm:latest ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:${{ github.sha }}
+        docker tag zkwasm:latest ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:${SHORT_SHA}
         
         # Push both tags
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:latest
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:${{ github.sha }} 
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:${SHORT_SHA} 
