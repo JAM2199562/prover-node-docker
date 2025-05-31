@@ -23,9 +23,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
     - name: Log in to Docker Hub
       if: github.event_name != 'pull_request'
       uses: docker/login-action@v3
@@ -36,51 +33,55 @@ jobs:
 
     - name: Extract metadata
       id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{major}}
-          type=sha,prefix=sha-,format=short
-          type=raw,value=latest,enable={{is_default_branch}}
+      run: |
+        # Generate tags
+        TAGS=""
+        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main"
+        elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:master"
+        elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" =~ ^refs/tags/ ]]; then
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${TAG_NAME},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+        else
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.number }}"
+        fi
+        
+        # Add commit SHA tag
+        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        TAGS="${TAGS},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}"
+        
+        echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+        echo "Generated tags: ${TAGS}"
 
     - name: Build Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        push: false
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        platforms: linux/amd64
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
+      env:
+        DOCKER_BUILDKIT: 0
+      run: |
+        echo "Building Docker image with DOCKER_BUILDKIT=0..."
+        docker build --rm --network=host -t ${{ env.IMAGE_NAME }}:latest .
+        
+        echo "Docker build completed successfully"
 
     - name: Test Docker image
       run: |
-        docker run --rm ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest echo "Image test successful"
+        docker run --rm ${{ env.IMAGE_NAME }}:latest echo "Image test successful"
 
-    - name: Push Docker image
+    - name: Tag and push Docker image
       if: github.event_name != 'pull_request'
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        platforms: linux/amd64
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
+      run: |
+        # Split tags and push each one
+        IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
+        for tag in "${TAG_ARRAY[@]}"; do
+          echo "Tagging image as: ${tag}"
+          docker tag ${{ env.IMAGE_NAME }}:latest ${tag}
+          echo "Pushing: ${tag}"
+          docker push ${tag}
+        done
+        
+        echo "All images pushed successfully"
 
     - name: Image digest
       if: github.event_name != 'pull_request'
-      run: echo ${{ steps.meta.outputs.digest }} 
+      run: |
+        docker inspect ${{ env.IMAGE_NAME }}:latest --format='{{index .RepoDigests 0}}' || echo "No digest available for local image" 

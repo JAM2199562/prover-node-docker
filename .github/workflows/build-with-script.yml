@@ -1,10 +1,11 @@
-name: Build with Script
+name: Build with Script (Manual Only)
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+  # Disabled automatic triggers - only manual dispatch allowed
+  # push:
+  #   branches: [ main, master ]
+  # pull_request:
+  #   branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -32,6 +33,10 @@ jobs:
         chmod +x scripts/build_image.sh
         bash scripts/build_image.sh
 
+    - name: Test image
+      run: |
+        docker run --rm zkwasm:latest echo "Image test successful"
+
     - name: Tag and push image
       if: github.event_name != 'pull_request'
       run: |
@@ -41,8 +46,4 @@ jobs:
         
         # Push both tags
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:latest
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:${{ github.sha }}
-
-    - name: Test image
-      run: |
-        docker run --rm zkwasm:latest echo "Image test successful" 
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm:${{ github.sha }} 
