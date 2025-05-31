@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: nyxyy/zkwasm
+  IMAGE_NAME: zkwasm
 
 jobs:
   build:
@@ -64,7 +64,7 @@ jobs:
 
     - name: Test Docker image
       run: |
-        docker run --rm ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest echo "Image test successful"
+        docker run --rm ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest echo "Image test successful"
 
     - name: Push Docker image
       if: github.event_name != 'pull_request'
