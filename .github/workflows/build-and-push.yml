@@ -31,57 +31,111 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Extract metadata
+    - name: Extract metadata and generate tags
       id: meta
       run: |
-        # Generate tags
+        # Generate tags based on trigger event
         TAGS=""
+        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        
         if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main"
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
         elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
-          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:master"
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:master,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
         elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" =~ ^refs/tags/ ]]; then
           TAG_NAME=${GITHUB_REF#refs/tags/}
-          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${TAG_NAME},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${TAG_NAME},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
         else
+          # Pull request builds - only build, don't push
           TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.number }}"
         fi
         
-        # Add commit SHA tag
-        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-        TAGS="${TAGS},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
-        
         echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+        echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
         echo "Generated tags: ${TAGS}"
 
     - name: Build Docker image
       env:
         DOCKER_BUILDKIT: 0
       run: |
-        echo "Building Docker image with DOCKER_BUILDKIT=0..."
-        docker build --rm --network=host -t ${{ env.IMAGE_NAME }}:latest .
+        echo "Building zkwasm prover node Docker image..."
+        echo "This image packages the pre-compiled prover-node-release binary"
+        echo "Base image: nvidia/cuda:12.2.0-devel-ubuntu22.04"
+        echo "Using DOCKER_BUILDKIT=0 (required for CUDA compatibility)"
+        
+        # Build the image using traditional docker build (no BuildKit)
+        docker build \
+          --rm \
+          --network=host \
+          -t ${{ env.IMAGE_NAME }}:latest \
+          --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+          --label "org.opencontainers.image.source=${{ github.repositoryUrl }}" \
+          --label "org.opencontainers.image.version=${{ steps.meta.outputs.short_sha }}" \
+          --label "org.opencontainers.image.revision=${{ github.sha }}" \
+          --label "org.opencontainers.image.title=zkwasm-prover-node" \
+          --label "org.opencontainers.image.description=Docker image for zkwasm prover node with pre-compiled binaries" \
+          .
         
         echo "Docker build completed successfully"
+        echo "Image contains:"
+        echo "- NVIDIA CUDA 12.2.0 runtime"
+        echo "- Pre-compiled zkwasm-playground binary" 
+        echo "- Configuration files and startup scripts"
 
     - name: Test Docker image
       run: |
-        docker run --rm ${{ env.IMAGE_NAME }}:latest echo "Image test successful"
+        echo "Testing Docker image basic functionality..."
+        
+        # Test image creation and basic commands
+        docker run --rm ${{ env.IMAGE_NAME }}:latest echo "✓ Image test successful"
+        docker run --rm ${{ env.IMAGE_NAME }}:latest whoami
+        docker run --rm ${{ env.IMAGE_NAME }}:latest pwd
+        
+        # Check if prover binary exists
+        docker run --rm ${{ env.IMAGE_NAME }}:latest ls -la target/release/zkwasm-playground
+        
+        echo "✓ All basic tests passed"
 
-    - name: Tag and push Docker image
+    - name: Tag and push Docker images
       if: github.event_name != 'pull_request'
       run: |
-        # Split tags and push each one
+        echo "Tagging and pushing images to Docker Hub..."
+        
+        # Split tags and process each one
         IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
         for tag in "${TAG_ARRAY[@]}"; do
-          echo "Tagging image as: ${tag}"
-          docker tag ${{ env.IMAGE_NAME }}:latest ${tag}
-          echo "Pushing: ${tag}"
-          docker push ${tag}
+          tag=$(echo "$tag" | xargs)  # Trim whitespace
+          if [[ -n "$tag" ]]; then
+            echo "Tagging image as: ${tag}"
+            docker tag ${{ env.IMAGE_NAME }}:latest ${tag}
+            echo "Pushing: ${tag}"
+            docker push ${tag}
+            echo "✓ Successfully pushed: ${tag}"
+          fi
         done
         
-        echo "All images pushed successfully"
+        echo "✓ All images pushed successfully to Docker Hub"
 
-    - name: Image digest
+    - name: Output build summary
       if: github.event_name != 'pull_request'
       run: |
-        docker inspect ${{ env.IMAGE_NAME }}:latest --format='{{index .RepoDigests 0}}' || echo "No digest available for local image" 
+        echo "🎉 Build Summary"
+        echo "==============="
+        echo "Repository: ${{ github.repository }}"
+        echo "Commit SHA: ${{ github.sha }}"
+        echo "Short SHA: ${{ steps.meta.outputs.short_sha }}"
+        echo "Event: ${{ github.event_name }}"
+        echo "Ref: ${{ github.ref }}"
+        echo ""
+        echo "📦 Pushed Images:"
+        IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
+        for tag in "${TAG_ARRAY[@]}"; do
+          tag=$(echo "$tag" | xargs)
+          if [[ -n "$tag" ]]; then
+            echo "  - ${tag}"
+          fi
+        done
+        echo ""
+        echo "🚀 Usage:"
+        echo "  docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+        echo "  docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.short_sha }}" 

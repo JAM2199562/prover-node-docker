@@ -1,5 +1,5 @@
 {
-  "server_url": "http://localhost:8080",
+  "server_url": "https://rpc.zkwasmhub.com:8090",
   "priv_key": "PRIVATE_KEY",
   "big_file_timeout": 1800,
   "get_timeout": 60,

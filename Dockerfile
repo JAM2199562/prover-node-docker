@@ -1,14 +1,18 @@
 FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
+
 # Install required packages and setup ssh access
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-server sudo cmake curl build-essential git wget && rm -rf /var/lib/apt/lists/* \
-    && sudo apt update -y && sudo apt install -y apache2-utils \
-    && mkdir /var/run/sshd \
-    && /etc/init.d/ssh start \
-    && useradd -rm -d /home/zkwasm -s /bin/bash -g root -G sudo -u 1001 zkwasm \
-    && echo 'zkwasm:zkwasm' | chpasswd \
-    && echo 'zkwasm ALL=(ALL:ALL) NOPASSWD: ALL' >> /etc/sudoers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server sudo cmake curl build-essential git wget \
+    jq nano vim htop procps && \
+    rm -rf /var/lib/apt/lists/* && \
+    sudo apt update -y && sudo apt install -y apache2-utils && \
+    mkdir /var/run/sshd && \
+    /etc/init.d/ssh start && \
+    useradd -rm -d /home/zkwasm -s /bin/bash -g root -G sudo -u 1001 zkwasm && \
+    echo 'zkwasm:zkwasm' | chpasswd && \
+    echo 'zkwasm ALL=(ALL:ALL) NOPASSWD: ALL' >> /etc/sudoers
 
 # Switch to the zkwasm user for subsequent commands
 USER zkwasm
@@ -26,10 +30,31 @@ WORKDIR /home/zkwasm/prover-node-release
 # Unpack tarball
 RUN tar -xvf prover_node_Ubuntu2204.tar
 
-# Create prover log folder
-RUN mkdir logs && \
-    mkdir logs/prover
+# Create prover log folder and other necessary directories
+RUN mkdir -p logs/prover && \
+    mkdir -p workspace && \
+    mkdir -p rocksdb
+
+# Copy smart entrypoint script
+COPY smart_entrypoint.sh /home/zkwasm/smart_entrypoint.sh
+
+# Switch to root to set permissions, then back to zkwasm
+USER root
+RUN chmod +x /home/zkwasm/smart_entrypoint.sh && \
+    chown zkwasm:root /home/zkwasm/smart_entrypoint.sh
+
+# Expose SSH port for vast.ai access
+EXPOSE 22
+
+# Switch back to zkwasm user
+USER zkwasm
 
 WORKDIR /home/zkwasm/prover-node-release
-# Command overriden by docker-compose
-CMD ["true"]
+
+# Set environment variables for CUDA and logging
+ENV CUDA_VISIBLE_DEVICES=0
+ENV RUST_LOG=info
+ENV RUST_BACKTRACE=1
+
+# Use smart entrypoint that waits for configuration
+ENTRYPOINT ["/home/zkwasm/smart_entrypoint.sh"]
