@@ -71,6 +71,30 @@ start_prover() {
     sudo chown -R zkwasm:root logs/
     sudo chown -R zkwasm:root rocksdb/ 2>/dev/null || true
     
+    # Check and download parameter files
+    mkdir -p workspace/static
+    
+    if [ ! -d "workspace/static/params" ] || [ -z "$(ls -A workspace/static/params 2>/dev/null)" ]; then
+        log "📦 Checking parameter files (required for K=22)..."
+        
+        # Try to download from localhost FTP (if available)
+        if timeout 60s wget -r -nH -nv --cut-dirs=1 --no-parent \
+            --user=ftpuser --password=ftppassword \
+            ftp://localhost/params/ \
+            -P workspace/static/ 2>/dev/null; then
+            log "✅ Parameter files downloaded successfully"
+        else
+            log "❌ Parameter files not available"
+            log "🔧 This container needs parameter files to run the prover"
+            log "💡 Run with docker-compose or copy params manually to workspace/static/params/"
+            log "⏳ Will retry in 60 seconds..."
+            sleep 60
+            return 1  # This will cause the main loop to retry
+        fi
+    else
+        log "✅ Parameter files already exist"
+    fi
+    
     log "Starting FTP server for parameter files..."
     
     # Start params-ftp service in background
