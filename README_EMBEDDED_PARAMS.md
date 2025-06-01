@@ -29,7 +29,7 @@ bash scripts/build_image.sh
 
 # 镜像构建过程中会：
 # 1. 从 zkwasm/params 镜像中拷贝参数文件
-# 2. 将文件放置在 /home/zkwasm/prover-node-release/workspace/static/params/
+# 2. 将文件放置在 /home/zkwasm/prover-node-release/workspace/static/
 # 3. 设置正确的文件权限
 ```
 
@@ -62,7 +62,7 @@ docker compose up
 # 进入容器检查参数文件
 docker exec -it prover-node-docker-prover-node-1 bash
 cd /home/zkwasm/prover-node-release
-ls -la workspace/static/params/
+ls -la workspace/static/*.params
 
 # 预期输出:
 # K22.params     (~268MB)
@@ -133,7 +133,7 @@ docker exec -it prover-node-docker-prover-node-1 tail -f logs/prover/*.log
 
 4. **验证参数文件**
    ```bash
-   docker exec -it prover-node-docker-prover-node-1 ls -la workspace/static/params/
+   docker exec -it prover-node-docker-prover-node-1 ls -la workspace/static/*.params
    ```
 
 ## 📋 **技术细节**
@@ -149,7 +149,7 @@ FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
 # ... 其他构建步骤 ...
 
 # 拷贝参数文件
-COPY --from=params-source /home/ftpuser/params/* /home/zkwasm/prover-node-release/workspace/static/params/
+COPY --from=params-source /home/ftpuser/params/* /home/zkwasm/prover-node-release/workspace/static/
 ```
 
 ### **智能入口脚本验证**

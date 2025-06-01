@@ -40,11 +40,11 @@ COPY prover_system_config.json /home/zkwasm/prover-node-release/prover_system_co
 
 # Create prover log folder and other necessary directories
 RUN mkdir -p logs/prover && \
-    mkdir -p workspace/static/params && \
+    mkdir -p workspace/static && \
     mkdir -p rocksdb
 
 # Copy parameter files from zkwasm/params image (build-time copy)
-COPY --from=params-source /home/ftpuser/params/* /home/zkwasm/prover-node-release/workspace/static/params/
+COPY --from=params-source /home/ftpuser/params/* /home/zkwasm/prover-node-release/workspace/static/
 
 # Copy the smart entrypoint script
 COPY smart_entrypoint.sh /home/zkwasm/smart_entrypoint.sh
@@ -57,7 +57,7 @@ RUN chmod +x /home/zkwasm/smart_entrypoint.sh && \
     chown zkwasm:root /home/zkwasm/smart_entrypoint.sh && \
     chown zkwasm:root /home/zkwasm/prover-node-release/prover_config.json && \
     chown zkwasm:root /home/zkwasm/prover-node-release/prover_system_config.json && \
-    chown -R zkwasm:root /home/zkwasm/prover-node-release/workspace/static/params/
+    chown -R zkwasm:root /home/zkwasm/prover-node-release/workspace/static/
 
 # Expose SSH port
 EXPOSE 22

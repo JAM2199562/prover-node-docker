@@ -30,15 +30,15 @@ sudo chown -R 1001:1001 rocksdb
 
 # Verify parameter files (now built into the image)
 echo "Checking parameter files..."
-if [ ! -d "workspace/static/params" ] || [ -z "$(ls -A workspace/static/params 2>/dev/null)" ]; then
-    echo "Error: Parameter files not found in workspace/static/params/"
+if [ ! -d "workspace/static" ] || [ -z "$(ls -A workspace/static/*.params 2>/dev/null)" ]; then
+    echo "Error: Parameter files not found in workspace/static/"
     echo "Parameter files should be built into the Docker image."
     echo "Please rebuild the image to include parameter files."
     exit 1
 fi
 
 echo "Parameter files found:"
-ls -la workspace/static/params/
+ls -la workspace/static/*.params
 
 # Start the prover
 time=$(date +%Y-%m-%d-%H-%M-%S) && \
