@@ -1,3 +1,7 @@
+# Multi-stage build: First stage to extract params from zkwasm/params image
+FROM zkwasm/params as params-source
+
+# Main build stage
 FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
@@ -39,17 +43,21 @@ RUN mkdir -p logs/prover && \
     mkdir -p workspace/static/params && \
     mkdir -p rocksdb
 
+# Copy parameter files from zkwasm/params image (build-time copy)
+COPY --from=params-source /home/ftpuser/params/* /home/zkwasm/prover-node-release/workspace/static/params/
+
 # Copy the smart entrypoint script
 COPY smart_entrypoint.sh /home/zkwasm/smart_entrypoint.sh
 
 # Switch to root to set permissions 
 USER root
 
-# Set up permissions
+# Set up permissions for all files
 RUN chmod +x /home/zkwasm/smart_entrypoint.sh && \
     chown zkwasm:root /home/zkwasm/smart_entrypoint.sh && \
     chown zkwasm:root /home/zkwasm/prover-node-release/prover_config.json && \
-    chown zkwasm:root /home/zkwasm/prover-node-release/prover_system_config.json
+    chown zkwasm:root /home/zkwasm/prover-node-release/prover_system_config.json && \
+    chown -R zkwasm:root /home/zkwasm/prover-node-release/workspace/static/params/
 
 # Expose SSH port
 EXPOSE 22

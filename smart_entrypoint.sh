@@ -1,18 +1,13 @@
 #!/bin/bash
 
 # Smart entrypoint for zkwasm prover
-# Checks configuration and downloads parameters before starting
+# Checks configuration and parameters before starting
 
 set -e
 
 CONFIG_FILE="/home/zkwasm/prover-node-release/prover_config.json"
 LOG_FILE="/home/zkwasm/prover-node-release/logs/entrypoint.log"
 PID_FILE="/home/zkwasm/prover-node-release/prover.pid"
-
-# FTP Server configuration
-FTP_SERVER_IP="${FTP_SERVER_IP:-localhost}"
-FTP_USER="ftpuser"
-FTP_PASS="ftppassword"
 
 # Ensure log directory exists
 mkdir -p /home/zkwasm/prover-node-release/logs
@@ -73,67 +68,40 @@ check_server_url() {
     return 0
 }
 
-# Function to download parameter files from FTP server
-download_params() {
-    log "📦 Downloading parameter files from FTP server: $FTP_SERVER_IP:21"
-    log "This may take a while on first run..."
+# Function to verify parameter files (built-in at build time)
+verify_params() {
+    log "📦 Verifying parameter files (copied during build)..."
     
-    # Check if parameter files already exist
-    if [ -d "workspace/static/params" ] && [ -n "$(ls -A workspace/static/params 2>/dev/null)" ]; then
-        log "✅ Parameter files already exist, skipping download"
-        return 0
-    fi
-    
-    # Create directory structure (ensure we're in the correct working directory)
+    # Change to the working directory
     cd /home/zkwasm/prover-node-release
-    mkdir -p workspace/static/params
     
-    # First, get list of files in params directory using curl
-    log "🔍 Getting file list from FTP server..."
-    local file_list
-    if ! file_list=$(curl -s -u "$FTP_USER:$FTP_PASS" ftp://$FTP_SERVER_IP/params/ --list-only); then
-        log "❌ Failed to get file list from FTP server"
+    # Check if parameter files exist
+    if [ ! -d "workspace/static/params" ]; then
+        log "❌ Parameter directory not found: workspace/static/params"
+        log "💡 This should have been created during Docker build. Rebuild the image."
         return 1
     fi
     
-    if [ -z "$file_list" ]; then
-        log "❌ No files found in params directory"
-        return 1
-    fi
-    
-    log "📄 Found files: $(echo $file_list | tr '\n' ' ')"
-    
-    # Download each file using curl
-    local download_success=true
-    cd workspace/static/params
-    
-    echo "$file_list" | while read -r filename; do
-        if [ -n "$filename" ]; then
-            log "⬇️  Downloading: $filename"
-            if curl -# -u "$FTP_USER:$FTP_PASS" ftp://$FTP_SERVER_IP/params/$filename -O; then
-                log "✅ Downloaded: $filename"
-            else
-                log "❌ Failed to download: $filename"
-                download_success=false
-            fi
+    # Check if parameter files exist and are not empty
+    local param_files_found=0
+    for param_file in "workspace/static/params"/*; do
+        if [ -f "$param_file" ] && [ -s "$param_file" ]; then
+            param_files_found=$((param_files_found + 1))
+            local file_size=$(ls -lh "$param_file" | awk '{print $5}')
+            log "✅ Found: $(basename "$param_file") ($file_size)"
         fi
     done
     
-    # Return to prover directory
-    cd /home/zkwasm/prover-node-release
-    
-    # Verify download results
-    if [ -d "workspace/static/params" ] && [ -n "$(ls -A workspace/static/params 2>/dev/null)" ]; then
-        log "✅ Parameter files downloaded successfully from $FTP_SERVER_IP:21"
-        log "✅ Verification: Parameter files found in workspace/static/params/"
-        ls -la workspace/static/params/ | while read line; do
-            log "   $line"
-        done
-        return 0
-    else
-        log "❌ Download failed - no files found in workspace/static/params/"
+    if [ $param_files_found -eq 0 ]; then
+        log "❌ No parameter files found in workspace/static/params/"
+        log "💡 The zkwasm/params image should contain K22.params, K23.params, etc."
+        log "💡 Please rebuild the Docker image to copy parameter files during build."
         return 1
     fi
+    
+    log "✅ Found $param_files_found parameter file(s)"
+    log "✅ Parameter files verification completed"
+    return 0
 }
 
 # Function to start the prover
@@ -232,7 +200,6 @@ trap cleanup SIGTERM SIGINT
 
 # Main execution
 log "🌟 ZKWasm Smart Entrypoint Started"
-log "🌐 FTP Server: $FTP_SERVER_IP:21"
 
 # Check configuration
 if ! check_private_key; then
@@ -249,9 +216,9 @@ fi
 
 log "✅ Configuration validated"
 
-# Download parameter files
-if ! download_params; then
-    log "❌ Failed to download parameter files"
+# Verify parameter files
+if ! verify_params; then
+    log "❌ Failed to verify parameter files"
     exit 1
 fi
 

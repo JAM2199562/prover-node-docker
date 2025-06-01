@@ -2,6 +2,19 @@
 
 This is the docker container for the prover node. This container is responsible for running the prover node and handling tasks from the server.
 
+## ✨ **New: Built-in Parameter Files Architecture**
+
+**🎯 Latest Update**: The prover node now uses **built-in parameter files** instead of runtime downloads!
+
+- 📦 **Parameters are embedded** in the Docker image at build time
+- 🚀 **No network dependencies** - no FTP server needed
+- ⚡ **Faster startup** - skip download steps
+- 🛡️ **More reliable** - avoid network issues and firewall problems
+
+For detailed information about the new architecture, see: [Built-in Parameters Guide](README_EMBEDDED_PARAMS.md)
+
+---
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)

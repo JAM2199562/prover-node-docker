@@ -28,8 +28,19 @@ fi
 
 sudo chown -R 1001:1001 rocksdb
 
-# Download param files from local FTP server
-wget -r -nH -nv --cut-dirs=1 --no-parent --user=ftpuser --password=ftppassword ftp://localhost/params/ -P /home/zkwasm/prover-node-release/workspace/static/ && \
+# Verify parameter files (now built into the image)
+echo "Checking parameter files..."
+if [ ! -d "workspace/static/params" ] || [ -z "$(ls -A workspace/static/params 2>/dev/null)" ]; then
+    echo "Error: Parameter files not found in workspace/static/params/"
+    echo "Parameter files should be built into the Docker image."
+    echo "Please rebuild the image to include parameter files."
+    exit 1
+fi
+
+echo "Parameter files found:"
+ls -la workspace/static/params/
+
+# Start the prover
 time=$(date +%Y-%m-%d-%H-%M-%S) && \
 CUDA_VISIBLE_DEVICES=0 RUST_LOG=info RUST_BACKTRACE=1 ./target/release/zkwasm-playground --config prover_config.json -w workspace --proversystemconfig prover_system_config.json -p --rocksdbworkspace rocksdb \
       2>&1 | rotatelogs -e -n 10 logs/prover/prover_${time}.log 100M
