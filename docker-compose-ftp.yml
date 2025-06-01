@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  params-ftp:
+    image: zkwasm/params
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
+    environment:
+      PUBLICHOST: "localhost"
+      FTP_USER_NAME: ftpuser
+      FTP_USER_PASS: ftppassword
+      FTP_USER_HOME: /home/ftpuser
+    healthcheck:
+      # Basic health check to ensure the FTP server is running
+      test: "ls -l /var/run/pure-ftpd.pid"
+      start_period: 5s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    container_name: zkwasm-params-ftp 

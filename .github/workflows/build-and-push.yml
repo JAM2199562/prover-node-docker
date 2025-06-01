@@ -2,26 +2,32 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ main, master ]
-    tags: [ 'v*' ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
+    inputs:
+      force_push:
+        description: 'Force push to registry'
+        required: false
+        default: 'false'
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: zkwasm
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/zkwasm
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-      packages: write
-
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver: docker
 
     - name: Log in to Docker Hub
       if: github.event_name != 'pull_request'
@@ -31,129 +37,112 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Extract metadata and generate tags
+    - name: Extract metadata
       id: meta
-      run: |
-        # Generate tags based on trigger event
-        TAGS=""
-        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-        
-        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
-        elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
-          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:master,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
-        elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" =~ ^refs/tags/ ]]; then
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${TAG_NAME},${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest,${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
-        else
-          # Pull request builds - only build, don't push
-          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.number }}"
-        fi
-        
-        echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-        echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
-        echo "Generated tags: ${TAGS}"
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-,format=short
+          type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build Docker image
-      env:
-        DOCKER_BUILDKIT: 0
-      run: |
-        echo "Building zkwasm prover node Docker image..."
-        echo "This image packages the pre-compiled prover-node-release binary"
-        echo "Base image: nvidia/cuda:12.2.0-devel-ubuntu22.04"
-        echo "Using DOCKER_BUILDKIT=0 (required for CUDA compatibility)"
-        
-        # Build the image using traditional docker build (no BuildKit)
-        docker build \
-          --rm \
-          --network=host \
-          -t ${{ env.IMAGE_NAME }}:latest \
-          --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-          --label "org.opencontainers.image.source=${{ github.repositoryUrl }}" \
-          --label "org.opencontainers.image.version=${{ steps.meta.outputs.short_sha }}" \
-          --label "org.opencontainers.image.revision=${{ github.sha }}" \
-          --label "org.opencontainers.image.title=zkwasm-prover-node" \
-          --label "org.opencontainers.image.description=Docker image for zkwasm prover node with pre-compiled binaries" \
-          .
-        
-        echo "Docker build completed successfully"
-        echo "Image contains:"
-        echo "- NVIDIA CUDA 12.2.0 runtime"
-        echo "- Pre-compiled zkwasm-playground binary" 
-        echo "- Configuration files and startup scripts"
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        load: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64
 
-    - name: Test Docker image
+    - name: Test container functionality
       run: |
-        echo "Testing Docker image basic functionality..."
+        echo "Testing container..."
         
-        # Test 1: Basic container startup and entrypoint script initialization
-        echo "🧪 Test 1: Smart entrypoint initialization"
-        timeout 60s docker run --rm ${{ env.IMAGE_NAME }}:latest &
-        sleep 5
-        echo "✓ Container starts and smart entrypoint initializes correctly"
+        # Get the first tag for testing
+        IMAGE_TAG=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)
+        echo "Testing image: $IMAGE_TAG"
         
-        # Test 2: Override entrypoint to test basic commands  
-        echo "🧪 Test 2: Basic container functionality"
-        docker run --rm --entrypoint="/bin/bash" ${{ env.IMAGE_NAME }}:latest -c "echo '✓ Basic shell access works'"
-        docker run --rm --entrypoint="/bin/bash" ${{ env.IMAGE_NAME }}:latest -c "whoami"
-        docker run --rm --entrypoint="/bin/bash" ${{ env.IMAGE_NAME }}:latest -c "pwd"
+        # Test 1: Check if container starts without errors
+        echo "Test 1: Container startup test"
+        timeout 30s docker run --rm --entrypoint="/bin/bash" "$IMAGE_TAG" -c "echo 'Container starts successfully'" || {
+          echo "❌ Container startup failed"
+          exit 1
+        }
         
-        # Test 3: Verify prover binary exists
-        echo "🧪 Test 3: Prover binary verification"
-        docker run --rm --entrypoint="/bin/bash" ${{ env.IMAGE_NAME }}:latest -c "ls -la /home/zkwasm/prover-node-release/target/release/zkwasm-playground"
+        # Test 2: Check if zkwasm binary exists
+        echo "Test 2: Binary existence test"
+        docker run --rm --entrypoint="/bin/bash" "$IMAGE_TAG" -c "ls -la /home/zkwasm/prover-node-release/zkwasm-playground" || {
+          echo "❌ zkwasm-playground binary not found"
+          exit 1
+        }
         
-        # Test 4: Verify configuration files exist
-        echo "🧪 Test 4: Configuration files verification"
-        docker run --rm --entrypoint="/bin/bash" ${{ env.IMAGE_NAME }}:latest -c "ls -la /home/zkwasm/prover-node-release/prover_config.json"
-        docker run --rm --entrypoint="/bin/bash" ${{ env.IMAGE_NAME }}:latest -c "ls -la /home/zkwasm/prover-node-release/prover_system_config.json"
+        # Test 3: Check if configuration files exist
+        echo "Test 3: Configuration files test"
+        docker run --rm --entrypoint="/bin/bash" "$IMAGE_TAG" -c "test -f /home/zkwasm/prover-node-release/prover_config.json && echo 'Config file exists'" || {
+          echo "❌ Configuration file missing"
+          exit 1
+        }
         
-        # Test 5: Verify smart entrypoint script exists and is executable
-        echo "🧪 Test 5: Smart entrypoint script verification"
-        docker run --rm --entrypoint="/bin/bash" ${{ env.IMAGE_NAME }}:latest -c "ls -la /home/zkwasm/smart_entrypoint.sh"
+        # Test 4: Check if smart entrypoint script exists
+        echo "Test 4: Smart entrypoint script test"
+        docker run --rm --entrypoint="/bin/bash" "$IMAGE_TAG" -c "test -x /home/zkwasm/smart_entrypoint.sh && echo 'Smart entrypoint exists'" || {
+          echo "❌ Smart entrypoint script missing"
+          exit 1
+        }
         
-        echo "🎉 All tests passed! The image is ready for vast.ai deployment."
-        echo "📝 Note: The smart entrypoint will wait for proper configuration when deployed."
+        # Test 5: Check workspace directory structure
+        echo "Test 5: Workspace structure test"
+        docker run --rm --entrypoint="/bin/bash" "$IMAGE_TAG" -c "ls -la /home/zkwasm/prover-node-release/workspace/static/"
+        
+        echo "✅ All tests passed!"
 
-    - name: Tag and push Docker images
+    - name: Push Docker image
+      if: github.event_name != 'pull_request'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        platforms: linux/amd64
+
+    - name: Display image information
       if: github.event_name != 'pull_request'
       run: |
-        echo "Tagging and pushing images to Docker Hub..."
-        
-        # Split tags and process each one
-        IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
-        for tag in "${TAG_ARRAY[@]}"; do
-          tag=$(echo "$tag" | xargs)  # Trim whitespace
-          if [[ -n "$tag" ]]; then
-            echo "Tagging image as: ${tag}"
-            docker tag ${{ env.IMAGE_NAME }}:latest ${tag}
-            echo "Pushing: ${tag}"
-            docker push ${tag}
-            echo "✓ Successfully pushed: ${tag}"
-          fi
-        done
-        
-        echo "✓ All images pushed successfully to Docker Hub"
-
-    - name: Output build summary
-      if: github.event_name != 'pull_request'
-      run: |
-        echo "🎉 Build Summary"
-        echo "==============="
-        echo "Repository: ${{ github.repository }}"
-        echo "Commit SHA: ${{ github.sha }}"
-        echo "Short SHA: ${{ steps.meta.outputs.short_sha }}"
-        echo "Event: ${{ github.event_name }}"
-        echo "Ref: ${{ github.ref }}"
+        echo "## 🚀 Docker Image Built and Pushed Successfully!"
         echo ""
-        echo "📦 Pushed Images:"
-        IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
-        for tag in "${TAG_ARRAY[@]}"; do
-          tag=$(echo "$tag" | xargs)
-          if [[ -n "$tag" ]]; then
-            echo "  - ${tag}"
-          fi
-        done
+        echo "**Image Tags:**"
+        echo '${{ steps.meta.outputs.tags }}' | sed 's/^/- /'
         echo ""
-        echo "🚀 Usage:"
-        echo "  docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
-        echo "  docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.short_sha }}" 
+        echo "**Deployment Options:**"
+        echo ""
+        echo "**Option A: With SSH access (port 2222):**"
+        echo "\`\`\`bash"
+        echo "docker run -d --gpus all \\"
+        echo "    -e FTP_SERVER_IP=\"YOUR_FTP_SERVER_IP\" \\"
+        echo "    -p 2222:22 \\"
+        echo "    --name zkwasm-prover \\"
+        echo "    ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+        echo "\`\`\`"
+        echo ""
+        echo "**Option B: No SSH (simpler, use docker exec):**"
+        echo "\`\`\`bash"
+        echo "docker run -d --gpus all \\"
+        echo "    -e FTP_SERVER_IP=\"YOUR_FTP_SERVER_IP\" \\"
+        echo "    --name zkwasm-prover \\"
+        echo "    ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+        echo "\`\`\`"
+        echo ""
+        echo "**Key features:**"
+        echo "- ✅ External FTP server support"
+        echo "- ✅ Configurable FTP server IP"
+        echo "- ✅ Smart configuration checking"
+        echo "- ✅ Automated parameter file download"
+        echo "- ✅ Port conflict avoidance" 

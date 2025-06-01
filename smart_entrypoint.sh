@@ -1,21 +1,25 @@
 #!/bin/bash
 
-# Smart entrypoint for vast.ai deployment
-# This script waits for proper configuration and then starts the prover node
+# Smart entrypoint for zkwasm prover
+# Checks configuration and downloads parameters before starting
 
 set -e
 
 CONFIG_FILE="/home/zkwasm/prover-node-release/prover_config.json"
 LOG_FILE="/home/zkwasm/prover-node-release/logs/entrypoint.log"
-CHECK_INTERVAL=30  # Check every 30 seconds
 PID_FILE="/home/zkwasm/prover-node-release/prover.pid"
+
+# FTP Server configuration
+FTP_SERVER_IP="${FTP_SERVER_IP:-localhost}"
+FTP_USER="ftpuser"
+FTP_PASS="ftppassword"
 
 # Ensure log directory exists
 mkdir -p /home/zkwasm/prover-node-release/logs
 
 # Logging function
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SMART: $1" | tee -a "$LOG_FILE"
 }
 
 # Function to check if private key is properly configured
@@ -24,19 +28,24 @@ check_private_key() {
         return 1
     fi
     
-    # Extract private key from JSON config
-    local priv_key=$(grep -o '"priv_key"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
+    # Extract private key from JSON config using jq if available, fallback to grep
+    local priv_key
+    if command -v jq >/dev/null 2>&1; then
+        priv_key=$(jq -r '.priv_key // empty' "$CONFIG_FILE" 2>/dev/null)
+    else
+        priv_key=$(grep -o '"priv_key"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
+    fi
     
     # Check if private key exists and is not placeholder
     if [ -z "$priv_key" ] || [ "$priv_key" = "PRIVATE_KEY" ] || [ "$priv_key" = "" ]; then
         return 1
     fi
     
-    # Check if private key looks valid (basic hex check, should be 64 characters without 0x prefix)
+    # Check if private key looks valid (should be 64 characters without 0x prefix)
     if [[ ${#priv_key} -eq 64 && "$priv_key" =~ ^[0-9a-fA-F]+$ ]]; then
         return 0
     elif [[ ${#priv_key} -eq 66 && "$priv_key" =~ ^0x[0-9a-fA-F]+$ ]]; then
-        log "WARNING: Private key should not include '0x' prefix according to documentation"
+        log "WARNING: Private key should not include '0x' prefix"
         return 1
     fi
     
@@ -49,9 +58,14 @@ check_server_url() {
         return 1
     fi
     
-    local server_url=$(grep -o '"server_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
+    local server_url
+    if command -v jq >/dev/null 2>&1; then
+        server_url=$(jq -r '.server_url // empty' "$CONFIG_FILE" 2>/dev/null)
+    else
+        server_url=$(grep -o '"server_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
+    fi
     
-    # Check if server URL is not localhost (vast.ai deployment shouldn't use localhost)
+    # Check if server URL is not localhost
     if [ "$server_url" = "http://localhost:8080" ] || [ -z "$server_url" ]; then
         return 1
     fi
@@ -59,7 +73,38 @@ check_server_url() {
     return 0
 }
 
-# Function to start the prover service
+# Function to download parameter files from FTP server
+download_params() {
+    log "📦 Downloading parameter files from FTP server: $FTP_SERVER_IP"
+    log "This may take a while on first run..."
+    
+    # Check if parameter files already exist
+    if [ -d "workspace/static/params" ] && [ -n "$(ls -A workspace/static/params 2>/dev/null)" ]; then
+        log "✅ Parameter files already exist, skipping download"
+        return 0
+    fi
+    
+    # Create directory structure
+    mkdir -p workspace/static
+    
+    # Try to download from FTP server
+    if timeout 300s wget -r -nH -nv --cut-dirs=1 --no-parent \
+        --user="$FTP_USER" --password="$FTP_PASS" \
+        "ftp://$FTP_SERVER_IP/params/" \
+        -P workspace/static/ 2>/dev/null; then
+        log "✅ Parameter files downloaded successfully from $FTP_SERVER_IP"
+        return 0
+    else
+        log "❌ Failed to download parameter files from $FTP_SERVER_IP"
+        log "💡 Please check:"
+        log "   1. FTP server is running at $FTP_SERVER_IP:21"
+        log "   2. Network connectivity to the FTP server"
+        log "   3. FTP credentials are correct"
+        return 1
+    fi
+}
+
+# Function to start the prover
 start_prover() {
     log "✓ Configuration validated. Starting prover node..."
     
@@ -68,148 +113,61 @@ start_prover() {
     
     # Ensure proper ownership of files
     sudo chown -R zkwasm:root .
-    sudo chown -R zkwasm:root logs/
+    sudo chown -R zkwasm:root logs/ 2>/dev/null || true
     sudo chown -R zkwasm:root rocksdb/ 2>/dev/null || true
-    
-    # Check and download parameter files
-    mkdir -p workspace/static
-    
-    if [ ! -d "workspace/static/params" ] || [ -z "$(ls -A workspace/static/params 2>/dev/null)" ]; then
-        log "📦 Checking parameter files (required for K=22)..."
-        
-        # Try to download from localhost FTP (if available)
-        if timeout 60s wget -r -nH -nv --cut-dirs=1 --no-parent \
-            --user=ftpuser --password=ftppassword \
-            ftp://localhost/params/ \
-            -P workspace/static/ 2>/dev/null; then
-            log "✅ Parameter files downloaded successfully"
-        else
-            log "❌ Parameter files not available"
-            log "🔧 This container needs parameter files to run the prover"
-            log "💡 Run with docker-compose or copy params manually to workspace/static/params/"
-            log "⏳ Will retry in 60 seconds..."
-            sleep 60
-            return 1  # This will cause the main loop to retry
-        fi
-    else
-        log "✅ Parameter files already exist"
-    fi
-    
-    log "Starting FTP server for parameter files..."
-    
-    # Start params-ftp service in background
-    if docker ps --format '{{.Names}}' | grep -q "params-ftp"; then
-        log "FTP server already running"
-    else
-        log "Starting FTP server container..."
-        # We need to start this in a way that works in the container
-        # For now, we'll skip the FTP server dependency check
-    fi
     
     log "Checking system requirements..."
     
     # Check available memory
     mem_available=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
     mem_available_gb=$((mem_available / 1024 / 1024))
+    
     log "Available memory: $mem_available_gb GB"
     
-    if [ "$mem_available_gb" -lt 80 ]; then
-        log "WARNING: Available memory ($mem_available_gb GB) is less than the recommended 80 GB."
+    if [ "$mem_available_gb" -lt 60 ]; then
+        log "⚠️  Warning: Available memory ($mem_available_gb GB) may be insufficient for optimal performance"
+        log "   Recommended: 80+ GB for stable operation"
     fi
     
-    # Check HugePages if available
-    if [ -f /proc/meminfo ]; then
-        hugepages_free=$(grep -i hugepages_free /proc/meminfo | awk '{print $2}' 2>/dev/null || echo "0")
-        log "HugePages_Free: $hugepages_free"
-        
-        if [ "$hugepages_free" -lt 15000 ] && [ "$hugepages_free" -gt 0 ]; then
-            log "WARNING: HugePages_Free ($hugepages_free) is less than 15000. Performance may be affected."
-        fi
-    fi
-    
-    # Check for NVIDIA GPU
+    # Check GPU
     if command -v nvidia-smi > /dev/null 2>&1; then
-        log "NVIDIA GPU check:"
-        nvidia-smi 2>&1 | tee -a "$LOG_FILE" || log "WARNING: nvidia-smi failed"
+        log "GPU status:"
+        nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null | head -1 | while read gpu_info; do
+            log "  $gpu_info"
+        done
     else
-        log "WARNING: nvidia-smi not found. GPU acceleration may not be available."
+        log "⚠️  nvidia-smi not found, GPU may not be available"
     fi
     
-    # Ensure rocksdb directory exists and has proper permissions
-    mkdir -p rocksdb
-    sudo chown -R zkwasm:root rocksdb/ 2>/dev/null || true
-    
-    # Start the actual prover process
-    log "🚀 Starting zkwasm-playground prover..."
-    
-    # Create a wrapper script to handle the prover process
+    # Set environment variables
     export CUDA_VISIBLE_DEVICES=0
     export RUST_LOG=info
     export RUST_BACKTRACE=1
     
-    # Get current timestamp for log file
-    time=$(date +%Y-%m-%d-%H-%M-%S)
+    # Start the prover
+    local time=$(date +%Y-%m-%d-%H-%M-%S)
     
-    # Start the prover and save PID
-    nohup ./target/release/zkwasm-playground \
-        --config prover_config.json \
-        -w workspace \
-        --proversystemconfig prover_system_config.json \
-        -p \
-        --rocksdbworkspace rocksdb \
+    log "🎯 Starting zkwasm-playground..."
+    log "📊 Logs will be written to: logs/prover/prover_${time}.log"
+    
+    # Start the prover process
+    nohup ./zkwasm-playground \
         > logs/prover/prover_${time}.log 2>&1 &
     
     local prover_pid=$!
     echo $prover_pid > "$PID_FILE"
     
-    log "✓ Prover started with PID: $prover_pid"
-    log "✓ Logs: logs/prover/prover_${time}.log"
-    log "🎯 Prover node is now running! Monitor logs for mining progress."
+    log "✅ Prover started with PID: $prover_pid"
+    log "📄 Monitor logs with: tail -f logs/prover/prover_${time}.log"
     
     # Monitor the process
     while kill -0 $prover_pid 2>/dev/null; do
-        sleep 60
-        log "📊 Prover process (PID: $prover_pid) is running"
+        sleep 30
+        log "📊 Prover (PID: $prover_pid) is running"
     done
     
-    log "❌ Prover process stopped unexpectedly"
+    log "❌ Prover process stopped"
     exit 1
-}
-
-# Function to display current configuration status
-show_config_status() {
-    log "🔍 Configuration Status Check:"
-    
-    if [ -f "$CONFIG_FILE" ]; then
-        log "  ✓ Config file exists: $CONFIG_FILE"
-        
-        local server_url=$(grep -o '"server_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
-        local priv_key=$(grep -o '"priv_key"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
-        
-        log "  Server URL: $server_url"
-        
-        if check_server_url; then
-            log "  ✓ Server URL: Configured"
-        else
-            log "  ❌ Server URL: Need configuration (currently: $server_url)"
-        fi
-        
-        if check_private_key; then
-            log "  ✓ Private Key: Configured and valid"
-        else
-            log "  ❌ Private Key: Need configuration (currently: ${priv_key:0:20}...)"
-        fi
-    else
-        log "  ❌ Config file missing: $CONFIG_FILE"
-    fi
-    
-    log ""
-    log "📝 To configure:"
-    log "  1. SSH into this container"
-    log "  2. Edit $CONFIG_FILE"
-    log "  3. Set 'priv_key' to your 64-character hex private key (no 0x prefix)"
-    log "  4. Set 'server_url' to the correct prover server endpoint"
-    log "  5. The prover will automatically start once configuration is detected"
 }
 
 # Cleanup function
@@ -235,29 +193,30 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGTERM SIGINT
 
-# Main loop
-log "🌟 ZKWasm Prover Node Smart Entrypoint Started"
-log "📍 Deployment: vast.ai compatible"
-log "🔄 Check interval: ${CHECK_INTERVAL} seconds"
-log ""
+# Main execution
+log "🌟 ZKWasm Smart Entrypoint Started"
+log "🌐 FTP Server: $FTP_SERVER_IP:21"
 
-# Initial configuration check
-show_config_status
+# Check configuration
+if ! check_private_key; then
+    log "❌ Private key not configured properly"
+    log "💡 Please edit $CONFIG_FILE and set a valid 64-character hex private key"
+    exit 1
+fi
 
-# Main monitoring loop
-while true; do
-    if check_private_key && check_server_url; then
-        log "✅ Valid configuration detected!"
-        start_prover
-        break
-    else
-        log "⏳ Waiting for configuration... (checked every ${CHECK_INTERVAL}s)"
-        show_config_status
-    fi
-    
-    sleep $CHECK_INTERVAL
-done
+if ! check_server_url; then
+    log "❌ Server URL not configured properly"
+    log "💡 Please edit $CONFIG_FILE and set server_url (current: http://localhost:8080)"
+    exit 1
+fi
 
-# This point should never be reached under normal circumstances
-log "❌ Unexpected exit from main loop"
-exit 1 
+log "✅ Configuration validated"
+
+# Download parameter files
+if ! download_params; then
+    log "❌ Failed to download parameter files"
+    exit 1
+fi
+
+# Start the prover
+start_prover 
