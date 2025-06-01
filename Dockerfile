@@ -30,6 +30,10 @@ WORKDIR /home/zkwasm/prover-node-release
 # Unpack tarball
 RUN tar -xvf prover_node_Ubuntu2204.tar
 
+# Copy additional configuration files (override defaults from tarball)
+COPY prover_config.json /home/zkwasm/prover-node-release/prover_config.json
+COPY prover_system_config.json /home/zkwasm/prover-node-release/prover_system_config.json
+
 # Create prover log folder and other necessary directories
 RUN mkdir -p logs/prover && \
     mkdir -p workspace && \
@@ -41,7 +45,9 @@ COPY smart_entrypoint.sh /home/zkwasm/smart_entrypoint.sh
 # Switch to root to set permissions, then back to zkwasm
 USER root
 RUN chmod +x /home/zkwasm/smart_entrypoint.sh && \
-    chown zkwasm:root /home/zkwasm/smart_entrypoint.sh
+    chown zkwasm:root /home/zkwasm/smart_entrypoint.sh && \
+    chown zkwasm:root /home/zkwasm/prover-node-release/prover_config.json && \
+    chown zkwasm:root /home/zkwasm/prover-node-release/prover_system_config.json
 
 # Expose SSH port for vast.ai access
 EXPOSE 22
