@@ -3,11 +3,10 @@ version: "3.9"
 services:
   params-ftp:
     image: zkwasm/params
-    ports:
-      - "21:21"
-      - "30000-30009:30000-30009"
+    network_mode: "host"
+    attach: false
     environment:
-      PUBLICHOST: "localhost"
+      PUBLICHOST: "0.0.0.0"
       FTP_USER_NAME: ftpuser
       FTP_USER_PASS: ftppassword
       FTP_USER_HOME: /home/ftpuser

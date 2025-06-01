@@ -75,7 +75,7 @@ check_server_url() {
 
 # Function to download parameter files from FTP server
 download_params() {
-    log "📦 Downloading parameter files from FTP server: $FTP_SERVER_IP"
+    log "📦 Downloading parameter files from FTP server: $FTP_SERVER_IP:21 (Active Mode)"
     log "This may take a while on first run..."
     
     # Check if parameter files already exist
@@ -87,19 +87,20 @@ download_params() {
     # Create directory structure
     mkdir -p workspace/static
     
-    # Try to download from FTP server
+    # Try to download from FTP server (wget uses active mode by default)
     if timeout 300s wget -r -nH -nv --cut-dirs=1 --no-parent \
         --user="$FTP_USER" --password="$FTP_PASS" \
         "ftp://$FTP_SERVER_IP/params/" \
         -P workspace/static/ 2>/dev/null; then
-        log "✅ Parameter files downloaded successfully from $FTP_SERVER_IP"
+        log "✅ Parameter files downloaded successfully from $FTP_SERVER_IP:21"
         return 0
     else
-        log "❌ Failed to download parameter files from $FTP_SERVER_IP"
+        log "❌ Failed to download parameter files from $FTP_SERVER_IP:21"
         log "💡 Please check:"
         log "   1. FTP server is running at $FTP_SERVER_IP:21"
         log "   2. Network connectivity to the FTP server"
         log "   3. FTP credentials are correct"
+        log "   4. Server allows active mode FTP connections"
         return 1
     fi
 }
@@ -200,7 +201,7 @@ trap cleanup SIGTERM SIGINT
 
 # Main execution
 log "🌟 ZKWasm Smart Entrypoint Started"
-log "🌐 FTP Server: $FTP_SERVER_IP:21"
+log "🌐 FTP Server: $FTP_SERVER_IP:21 (Active Mode)"
 
 # Check configuration
 if ! check_private_key; then

@@ -8,7 +8,7 @@
 ┌─────────────────┐       FTP Download        ┌─────────────────┐
 │   FTP Server    │ ◄─────────────────────── │  Prover Node    │
 │  (外部机器)      │     K22.params etc.      │   (vast.ai)     │
-│  Port 21        │                          │                 │
+│  Port 21        │    (Active Mode FTP)     │                 │
 └─────────────────┘                          └─────────────────┘
 ```
 
@@ -21,7 +21,8 @@
 git clone <your-repo>
 cd prover-node-docker
 
-# 启动独立的 FTP 服务器 (监听 21 端口)
+# 启动独立的 FTP 服务器（按原始设计）
+# 注意：PUBLICHOST 已设置为 "0.0.0.0"，支持外部访问
 docker-compose -f docker-compose-ftp.yml up -d
 
 # 检查服务状态
@@ -31,12 +32,12 @@ docker-compose -f docker-compose-ftp.yml ps
 ### **验证 FTP 服务器**
 
 ```bash
-# 测试 FTP 连接
+# 测试 FTP 连接（主动模式）
 ftp YOUR_FTP_SERVER_IP
 # 用户名: ftpuser
 # 密码: ftppassword
 
-# 或使用 wget 测试
+# 或使用 wget 测试（wget默认使用主动模式）
 wget -r -nH -nv --cut-dirs=1 --no-parent \
     --user=ftpuser --password=ftppassword \
     ftp://YOUR_FTP_SERVER_IP/params/ \
@@ -44,6 +45,10 @@ wget -r -nH -nv --cut-dirs=1 --no-parent \
 
 # 检查是否下载到参数文件
 ls -la /tmp/test/params/
+
+# 🎯 快速测试：检查FTP服务器是否正常响应
+telnet YOUR_FTP_SERVER_IP 21
+# 看到 "220 Welcome to Pure-FTPd" 表示成功
 ```
 
 ## 🔧 **2. 配置 Prover 节点**
@@ -175,12 +180,12 @@ docker exec -it zkwasm-prover telnet YOUR_FTP_SERVER_IP 21
    docker exec -it zkwasm-prover telnet YOUR_FTP_SERVER_IP 21
    
    # 检查防火墙设置
-   # 确保 21 端口和 30000-30009 端口开放
+   # 只需要确保 21 端口开放（主动模式FTP）
    ```
 
 2. **参数文件下载失败**
    ```bash
-   # 手动测试下载
+   # 手动测试下载（确保使用主动模式）
    docker exec -it zkwasm-prover wget -r -nH -nv --cut-dirs=1 --no-parent \
        --user=ftpuser --password=ftppassword \
        ftp://YOUR_FTP_SERVER_IP/params/ \
@@ -207,11 +212,10 @@ docker exec -it zkwasm-prover telnet YOUR_FTP_SERVER_IP 21
 ### **防火墙配置**
 
 ```bash
-# FTP 服务器需要开放的端口
-- 21 (FTP控制端口)
-- 30000-30009 (被动模式数据端口)
+# FTP 服务器需要开放的端口（主动模式）
+- 21 (FTP控制端口，也用于数据传输)
 
-# Prover 只需要出站连接到 FTP 服务器
+# Prover 只需要出站连接到 FTP 服务器的21端口
 # 如果使用SSH，还需要开放对应的SSH端口（如2222）
 ```
 
@@ -230,4 +234,4 @@ docker exec -it zkwasm-prover telnet YOUR_FTP_SERVER_IP 21
 ✅ **保密性好**: 使用现有用户名密码，只需配置 IP 地址  
 ✅ **维护简单**: 各组件独立，便于调试和升级  
 ✅ **成本优化**: FTP 服务器不需要昂贵的 GPU 资源  
-✅ **端口友好**: 避免与主机服务端口冲突 
+✅ **端口友好**: 只需要开放21端口（主动模式FTP） 
