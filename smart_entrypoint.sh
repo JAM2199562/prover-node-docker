@@ -75,7 +75,7 @@ check_server_url() {
 
 # Function to download parameter files from FTP server
 download_params() {
-    log "📦 Downloading parameter files from FTP server: $FTP_SERVER_IP:21 (Active Mode)"
+    log "📦 Downloading parameter files from FTP server: $FTP_SERVER_IP:21"
     log "This may take a while on first run..."
     
     # Check if parameter files already exist
@@ -84,23 +84,54 @@ download_params() {
         return 0
     fi
     
-    # Create directory structure
-    mkdir -p workspace/static
+    # Create directory structure (ensure we're in the correct working directory)
+    cd /home/zkwasm/prover-node-release
+    mkdir -p workspace/static/params
     
-    # Try to download from FTP server (wget uses active mode by default)
-    if timeout 300s wget -r -nH -nv --cut-dirs=1 --no-parent \
-        --user="$FTP_USER" --password="$FTP_PASS" \
-        "ftp://$FTP_SERVER_IP/params/" \
-        -P workspace/static/ 2>/dev/null; then
+    # First, get list of files in params directory using curl
+    log "🔍 Getting file list from FTP server..."
+    local file_list
+    if ! file_list=$(curl -s -u "$FTP_USER:$FTP_PASS" ftp://$FTP_SERVER_IP/params/ --list-only); then
+        log "❌ Failed to get file list from FTP server"
+        return 1
+    fi
+    
+    if [ -z "$file_list" ]; then
+        log "❌ No files found in params directory"
+        return 1
+    fi
+    
+    log "📄 Found files: $(echo $file_list | tr '\n' ' ')"
+    
+    # Download each file using curl
+    local download_success=true
+    cd workspace/static/params
+    
+    echo "$file_list" | while read -r filename; do
+        if [ -n "$filename" ]; then
+            log "⬇️  Downloading: $filename"
+            if curl -# -u "$FTP_USER:$FTP_PASS" ftp://$FTP_SERVER_IP/params/$filename -O; then
+                log "✅ Downloaded: $filename"
+            else
+                log "❌ Failed to download: $filename"
+                download_success=false
+            fi
+        fi
+    done
+    
+    # Return to prover directory
+    cd /home/zkwasm/prover-node-release
+    
+    # Verify download results
+    if [ -d "workspace/static/params" ] && [ -n "$(ls -A workspace/static/params 2>/dev/null)" ]; then
         log "✅ Parameter files downloaded successfully from $FTP_SERVER_IP:21"
+        log "✅ Verification: Parameter files found in workspace/static/params/"
+        ls -la workspace/static/params/ | while read line; do
+            log "   $line"
+        done
         return 0
     else
-        log "❌ Failed to download parameter files from $FTP_SERVER_IP:21"
-        log "💡 Please check:"
-        log "   1. FTP server is running at $FTP_SERVER_IP:21"
-        log "   2. Network connectivity to the FTP server"
-        log "   3. FTP credentials are correct"
-        log "   4. Server allows active mode FTP connections"
+        log "❌ Download failed - no files found in workspace/static/params/"
         return 1
     fi
 }
@@ -201,7 +232,7 @@ trap cleanup SIGTERM SIGINT
 
 # Main execution
 log "🌟 ZKWasm Smart Entrypoint Started"
-log "🌐 FTP Server: $FTP_SERVER_IP:21 (Active Mode)"
+log "🌐 FTP Server: $FTP_SERVER_IP:21"
 
 # Check configuration
 if ! check_private_key; then
