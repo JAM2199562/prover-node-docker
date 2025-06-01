@@ -79,3 +79,4 @@ else
     log "Using smart entrypoint..."
     exec /home/zkwasm/smart_entrypoint.sh
 fi 
+
