@@ -75,7 +75,7 @@ jobs:
         
         # Test 2: Check if zkwasm binary exists
         echo "Test 2: Binary existence test"
-        docker run --rm --entrypoint="/bin/bash" "$IMAGE_TAG" -c "ls -la /home/zkwasm/prover-node-release/zkwasm-playground" || {
+        docker run --rm --entrypoint="/bin/bash" "$IMAGE_TAG" -c "ls -la /home/zkwasm/prover-node-release/target/release/zkwasm-playground" || {
           echo "❌ zkwasm-playground binary not found"
           exit 1
         }

@@ -151,7 +151,12 @@ start_prover() {
     log "📊 Logs will be written to: logs/prover/prover_${time}.log"
     
     # Start the prover process
-    nohup ./zkwasm-playground \
+    nohup ./target/release/zkwasm-playground \
+        --config prover_config.json \
+        -w workspace \
+        --proversystemconfig prover_system_config.json \
+        -p \
+        --rocksdbworkspace rocksdb \
         > logs/prover/prover_${time}.log 2>&1 &
     
     local prover_pid=$!
